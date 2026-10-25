@@ -17,8 +17,12 @@
 #define FEC_VERBOSE
 #endif
 
-#define RTP_PAYLOAD_TYPE_AUDIO   97
+#define RTP_PAYLOAD_TYPE_OPUS    97
 #define RTP_PAYLOAD_TYPE_FEC     127
+
+// Audio data packets are Opus, or bitstream chunks in a passthrough session. The
+// queue is created before the RTSP handshake decides which, so check at packet time.
+#define RTP_PAYLOAD_TYPE_AUDIO (NegotiatedAudioBitstreamFormat ? RTP_PAYLOAD_TYPE_AUDIO_BITSTREAM : RTP_PAYLOAD_TYPE_OPUS)
 
 void RtpaInitializeQueue(PRTP_AUDIO_QUEUE queue) {
     memset(queue, 0, sizeof(*queue));

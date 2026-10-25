@@ -932,6 +932,10 @@ const char* LiGetHostPyroWaveBitstreamId(void) {
     return hostPyroWaveBitstreamId;
 }
 
+int LiGetAudioBitstreamFormat(void) {
+    return NegotiatedAudioBitstreamFormat;
+}
+
 bool parseSdpAttributeToUInt(const char* payload, const char* name, uint32_t* val) {
     // Find the entry for the specified attribute name
     char* attribute = strstr(payload, name);
@@ -1204,6 +1208,24 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
         // Look for the Sunshine feature flags in the SDP attributes
         if (!parseSdpAttributeToUInt(response.payload, "x-ss-general.featureFlags", &SunshineFeatureFlags)) {
             SunshineFeatureFlags = 0;
+        }
+
+        // Audio bitstream passthrough: the host lists the formats it can capture now.
+        // Use one only if the renderer can play it; the host applies the same rule
+        // to our ANNOUNCE, so both ends agree without another round trip.
+        if (!parseSdpAttributeToUInt(response.payload, "x-ss-audio.bitstreamFormats", &HostAudioBitstreamFormats)) {
+            HostAudioBitstreamFormats = 0;
+        }
+        NegotiatedAudioBitstreamFormat = 0;
+        if (HostAudioBitstreamFormats & AUDIO_BITSTREAM_FORMAT_IEC61937) {
+            if ((AudioCallbacks.capabilities & CAPABILITY_AUDIO_BITSTREAM_IEC61937) &&
+                AudioCallbacks.initBitstream != NULL && AudioCallbacks.playBitstream != NULL) {
+                NegotiatedAudioBitstreamFormat = AUDIO_BITSTREAM_FORMAT_IEC61937;
+                Limelog("Audio: IEC 61937 bitstream passthrough\n");
+            }
+            else {
+                Limelog("Host offers audio bitstream passthrough, but the audio renderer can't play it\n");
+            }
         }
 
         // Look for the Sunshine encryption flags in the SDP attributes

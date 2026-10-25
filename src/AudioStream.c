@@ -12,6 +12,9 @@ static PLT_THREAD decoderThread;
 static PPLT_CRYPTO_CONTEXT audioDecryptionCtx;
 static uint32_t avRiKeyId;
 
+// Reassembles bitstream passthrough chunks (only used in a passthrough session)
+static AUDIO_BITSTREAM_STATE bitstreamState;
+
 static unsigned short lastSeq;
 
 static bool pingThreadStarted;
@@ -68,6 +71,7 @@ static void AudioPingThreadProc(void* context) {
 int initializeAudioStream(void) {
     LbqInitializeLinkedBlockingQueue(&packetQueue, 30);
     RtpaInitializeQueue(&rtpAudioQueue);
+    AbInitialize(&bitstreamState);
     lastSeq = 0;
     receivedDataFromPeer = false;
     pingThreadStarted = false;
@@ -137,6 +141,12 @@ void destroyAudioStream(void) {
     PltDestroyCryptoContext(audioDecryptionCtx);
     freePacketList(LbqDestroyLinkedBlockingQueue(&packetQueue));
     RtpaCleanupQueue(&rtpAudioQueue);
+
+    if (bitstreamState.lostFrames || bitstreamState.badChunks || bitstreamState.badFrames) {
+        Limelog("Audio bitstream: %u frames lost, %u bad chunks, %u bad frames\n",
+                bitstreamState.lostFrames, bitstreamState.badChunks, bitstreamState.badFrames);
+    }
+    AbCleanup(&bitstreamState);
 }
 
 static bool queuePacketToLbq(PQUEUED_AUDIO_PACKET* packet) {
@@ -159,12 +169,25 @@ static bool queuePacketToLbq(PQUEUED_AUDIO_PACKET* packet) {
     return err == LBQ_SUCCESS;
 }
 
+// Delivers a decrypted audio payload: Opus, or a passthrough chunk.
+static void submitAudioPayload(unsigned char* data, int length) {
+    if (NegotiatedAudioBitstreamFormat) {
+        // Missing chunks are noticed by the reassembler from the frame ids
+        AbPushChunk(&bitstreamState, data, length, AudioCallbacks.playBitstream);
+    }
+    else {
+        AudioCallbacks.decodeAndPlaySample((char*)data, length);
+    }
+}
+
 static void decodeInputData(PQUEUED_AUDIO_PACKET packet) {
     // If the packet size is zero, this is a placeholder for a missing
     // packet. Trigger packet loss concealment logic in libopus by
     // invoking the decoder with a NULL buffer.
     if (packet->header.size == 0) {
-        AudioCallbacks.decodeAndPlaySample(NULL, 0);
+        if (!NegotiatedAudioBitstreamFormat) {
+            AudioCallbacks.decodeAndPlaySample(NULL, 0);
+        }
         return;
     }
 
@@ -201,7 +224,10 @@ static void decodeInputData(PQUEUED_AUDIO_PACKET packet) {
         }
 
 #ifdef LC_DEBUG
-        if (opusHeaderByte == INVALID_OPUS_HEADER) {
+        if (NegotiatedAudioBitstreamFormat) {
+            // Bitstream chunks have no Opus TOC byte to check
+        }
+        else if (opusHeaderByte == INVALID_OPUS_HEADER) {
             opusHeaderByte = decryptedOpusData[0];
             LC_ASSERT_VT(opusHeaderByte != INVALID_OPUS_HEADER);
         }
@@ -215,11 +241,14 @@ static void decodeInputData(PQUEUED_AUDIO_PACKET packet) {
         }
 #endif
 
-        AudioCallbacks.decodeAndPlaySample((char*)decryptedOpusData, dataLength);
+        submitAudioPayload(decryptedOpusData, dataLength);
     }
     else {
 #ifdef LC_DEBUG
-        if (opusHeaderByte == INVALID_OPUS_HEADER) {
+        if (NegotiatedAudioBitstreamFormat) {
+            // Bitstream chunks have no Opus TOC byte to check
+        }
+        else if (opusHeaderByte == INVALID_OPUS_HEADER) {
             opusHeaderByte = ((uint8_t*)(rtp + 1))[0];
             LC_ASSERT_VT(opusHeaderByte != INVALID_OPUS_HEADER);
         }
@@ -232,7 +261,7 @@ static void decodeInputData(PQUEUED_AUDIO_PACKET packet) {
         }
 #endif
 
-        AudioCallbacks.decodeAndPlaySample((char*)(rtp + 1), packet->header.size - sizeof(*rtp));
+        submitAudioPayload((unsigned char*)(rtp + 1), packet->header.size - sizeof(*rtp));
     }
 }
 
@@ -311,7 +340,7 @@ static void AudioReceiveThreadProc(void* context) {
         // we will drop the ones that arrived before the receive thread was ready.
         if (packetsToDrop > 0) {
             // Only count actual audio data (not FEC) in the packets to drop calculation
-            if (rtp->packetType == 97) {
+            if (rtp->packetType == (NegotiatedAudioBitstreamFormat ? RTP_PAYLOAD_TYPE_AUDIO_BITSTREAM : 97)) {
                 packetsToDrop--;
             }
             continue;
@@ -421,8 +450,7 @@ void stopAudioStream(void) {
     AudioCallbacks.cleanup();
 }
 
-int startAudioStream(void* audioContext, int arFlags) {
-    int err;
+static int initOpusRenderer(void* audioContext, int arFlags) {
     OPUS_MULTISTREAM_CONFIGURATION chosenConfig;
 
     if (HighQualitySurroundEnabled) {
@@ -439,7 +467,18 @@ int startAudioStream(void* audioContext, int arFlags) {
 
     chosenConfig.samplesPerFrame = 48 * AudioPacketDuration;
 
-    err = AudioCallbacks.init(StreamConfig.audioConfiguration, &chosenConfig, audioContext, arFlags);
+    return AudioCallbacks.init(StreamConfig.audioConfiguration, &chosenConfig, audioContext, arFlags);
+}
+
+int startAudioStream(void* audioContext, int arFlags) {
+    int err;
+
+    if (NegotiatedAudioBitstreamFormat) {
+        err = AudioCallbacks.initBitstream(NegotiatedAudioBitstreamFormat, audioContext, arFlags);
+    }
+    else {
+        err = initOpusRenderer(audioContext, arFlags);
+    }
     if (err != 0) {
         return err;
     }

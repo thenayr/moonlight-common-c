@@ -33,6 +33,8 @@ SS_PING AudioPingPayload;
 SS_PING VideoPingPayload;
 uint32_t ControlConnectData;
 uint32_t SunshineFeatureFlags;
+uint32_t HostAudioBitstreamFormats;
+int NegotiatedAudioBitstreamFormat;
 uint32_t EncryptionFeaturesSupported;
 uint32_t EncryptionFeaturesRequested;
 uint32_t EncryptionFeaturesEnabled;
@@ -260,6 +262,8 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
 
     memset(&LocalAddr, 0, sizeof(LocalAddr));
     NegotiatedVideoFormat = 0;
+    HostAudioBitstreamFormats = 0;
+    NegotiatedAudioBitstreamFormat = 0;
     memcpy(&StreamConfig, streamConfig, sizeof(StreamConfig));
     RemoteAddrString = strdup(serverInfo->address);
 

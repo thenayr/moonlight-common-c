@@ -305,6 +305,12 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
         snprintf(payloadStr, sizeof(payloadStr), "%" PRIu32, EncryptionFeaturesEnabled);
         err |= addAttributeString(&optionHead, "x-ss-general.encryptionEnabled", payloadStr);
 
+        // Audio bitstream passthrough, decided from the host's DESCRIBE response
+        if (NegotiatedAudioBitstreamFormat != 0) {
+            snprintf(payloadStr, sizeof(payloadStr), "%d", NegotiatedAudioBitstreamFormat);
+            err |= addAttributeString(&optionHead, "x-ss-audio.bitstreamFormats", payloadStr);
+        }
+
         // Enable YUV444 if requested
         if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_YUV444) {
             err |= addAttributeString(&optionHead, "x-ss-video[0].chromaSamplingType", "1");

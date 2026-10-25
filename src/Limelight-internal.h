@@ -9,6 +9,7 @@
 #include "Input.h"
 #include "RtpAudioQueue.h"
 #include "RtpVideoQueue.h"
+#include "AudioBitstream.h"
 #include "ByteBuffer.h"
 
 #include <enet/enet.h>
@@ -43,6 +44,11 @@ extern SS_PING VideoPingPayload;
 extern uint32_t ControlConnectData;
 
 extern uint32_t SunshineFeatureFlags;
+
+// Audio bitstream passthrough (Vibepollo): formats the host advertised in DESCRIBE,
+// and the one this session uses (0 for Opus). Set during the RTSP handshake.
+extern uint32_t HostAudioBitstreamFormats;
+extern int NegotiatedAudioBitstreamFormat;
 
 // Encryption flags shared by Sunshine and Moonlight in RTSP
 #define SS_ENC_CONTROL_V2 0x01

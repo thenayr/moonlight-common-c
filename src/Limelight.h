@@ -313,6 +313,13 @@ typedef struct _DECODE_UNIT {
 // supports reference frame invalidation for AV1 streams. This flag is only valid on video renderers.
 #define CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1 0x40
 
+// If set in the audio renderer capabilities field, the renderer can play an IEC 61937
+// bitstream (Dolby MAT / Dolby Atmos from a Vibepollo host) by passing it to an HDMI
+// output unchanged, and provides the initBitstream and playBitstream callbacks. Only set
+// it when the output can actually pass the stream through, and the host isn't also
+// playing audio locally. See Vibepollo's docs/audio-bitstream-protocol.md.
+#define CAPABILITY_AUDIO_BITSTREAM_IEC61937 0x80
+
 // If set in the video renderer capabilities field, this macro specifies that the renderer
 // supports slicing to increase decoding performance. The parameter specifies the desired
 // number of slices per frame. This capability is only valid on video renderers.
@@ -393,6 +400,30 @@ typedef void(*AudioRendererCleanup)(void);
 // This callback provides Opus audio data to be decoded and played. sampleLength is in bytes.
 typedef void(*AudioRendererDecodeAndPlaySample)(char* sampleData, int sampleLength);
 
+// Audio bitstream passthrough formats (CAPABILITY_AUDIO_BITSTREAM_*).
+#define AUDIO_BITSTREAM_FORMAT_IEC61937 0x1
+
+// Flags passed to AudioRendererPlayBitstream.
+// The data starts at an IEC 61937 burst preamble (Pa/Pb = 72 F8 1F 4E as 16-bit
+// little-endian samples).
+#define AUDIO_BITSTREAM_FLAG_BURST_ALIGNED 0x01
+// The data doesn't continue the previous call's: a new host stream, or data was lost.
+// Resynchronize output (e.g. drop queued data) and resume at a burst-aligned frame.
+#define AUDIO_BITSTREAM_FLAG_DISCONTINUITY 0x02
+
+// Called instead of init when bitstream passthrough was negotiated (see
+// LiGetAudioBitstreamFormat()). format is an AUDIO_BITSTREAM_FORMAT_* value.
+// Returns 0 on success, non-zero on failure.
+typedef int(*AudioRendererInitBitstream)(int format, void* context, int arFlags);
+
+// Called instead of decodeAndPlaySample in a passthrough session with each rebuilt
+// frame: the exact bytes the host rendered, usually one 20 ms IEC 61937 burst period.
+// Play them as 16-bit little-endian PCM in non-audio (passthrough) mode. The container
+// follows the burst type in Pc (data[4] & 0x7F) of a burst-aligned frame: 22 (MAT/TrueHD)
+// is 8 channels at 192 kHz, 21 (E-AC-3) is 2 channels at 192 kHz, 1 (AC-3) is 2 channels
+// at 48 kHz. The buffer is only valid during the call.
+typedef void(*AudioRendererPlayBitstream)(const unsigned char* data, int length, int flags);
+
 typedef struct _AUDIO_RENDERER_CALLBACKS {
     AudioRendererInit init;
     AudioRendererStart start;
@@ -400,6 +431,10 @@ typedef struct _AUDIO_RENDERER_CALLBACKS {
     AudioRendererCleanup cleanup;
     AudioRendererDecodeAndPlaySample decodeAndPlaySample;
     int capabilities;
+
+    // Bitstream passthrough; both are required with CAPABILITY_AUDIO_BITSTREAM_IEC61937.
+    AudioRendererInitBitstream initBitstream;
+    AudioRendererPlayBitstream playBitstream;
 } AUDIO_RENDERER_CALLBACKS, *PAUDIO_RENDERER_CALLBACKS;
 
 // Use this function to zero the audio callbacks when allocated on the stack or heap
@@ -1063,6 +1098,10 @@ bool LiGetHdrMetadata(PSS_HDR_METADATA metadata);
 // that encode PyroWave without advertising it use an unknown bitstream revision.
 // Valid after the RTSP handshake. This is a Sunshine protocol extension.
 const char* LiGetHostPyroWaveBitstreamId(void);
+
+// Returns the negotiated AUDIO_BITSTREAM_FORMAT_* value, or 0 for an Opus session.
+// Valid after the RTSP handshake. This is a Vibepollo protocol extension.
+int LiGetAudioBitstreamFormat(void);
 
 // This function requests an IDR frame from the host. Typically this is done using DR_NEED_IDR, but clients
 // processing frames asynchronously may need to reset their decoder state even after returning DR_OK for
