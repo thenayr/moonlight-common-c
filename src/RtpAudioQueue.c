@@ -532,6 +532,13 @@ static void handleMissingPackets(PRTP_AUDIO_QUEUE queue) {
     // remaining packets from this block arrive, they will trigger the OOS detection and kick us out of fast
     // audio recovery mode.
     if (isBefore16(queue->nextRtpSequenceNumber, queue->blockHead->fecHeader.baseSequenceNumber)) {
+        // A bitstream passthrough host resends every data packet, so a block whose first copies were all
+        // lost can still arrive. Wait for it as long as for a partly received block.
+        if (NegotiatedAudioBitstreamFormat &&
+            PltGetMicroseconds() - queue->blockHead->queueTimeUs <= (uint64_t)RTPQ_BITSTREAM_WAIT_TIME_MS * 1000) {
+            return;
+        }
+
         queue->nextRtpSequenceNumber = queue->blockHead->fecHeader.baseSequenceNumber;
         queue->oldestRtpBaseSequenceNumber = queue->blockHead->fecHeader.baseSequenceNumber;
         return;
