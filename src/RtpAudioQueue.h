@@ -8,6 +8,11 @@ typedef struct _reed_solomon reed_solomon;
 // after the entire FEC block should have been received
 #define RTPQ_OOS_WAIT_TIME_MS 10
 
+// Bitstream passthrough: how long a FEC block may wait for missing shards. The
+// host sends every data packet a second time 12 ms after the first, so a block
+// whose packets a burst of network loss dropped can still complete from the copies.
+#define RTPQ_BITSTREAM_WAIT_TIME_MS 30
+
 #define RTPA_DATA_SHARDS 4
 #define RTPA_FEC_SHARDS 2
 #define RTPA_TOTAL_SHARDS (RTPA_DATA_SHARDS + RTPA_FEC_SHARDS)
